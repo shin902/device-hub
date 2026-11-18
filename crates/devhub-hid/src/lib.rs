@@ -26,6 +26,9 @@ pub mod hidpp;
 pub mod lamzu;
 #[allow(dead_code)]
 mod mousefit;
+/// Logitech HID++ 2.0 オンボードプロファイル形式 (0x8100)。純粋な変換のみ。
+#[doc(hidden)]
+pub mod hidpp_onboard;
 mod mousefit8;
 /// 生 HID チャネル。診断 example (axraw 等) が直接フレームを投げるために公開。
 #[doc(hidden)]
