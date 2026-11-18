@@ -13,7 +13,7 @@ use super::onboard_io::OnboardProfilesDesc;
 use super::proto::Hidpp;
 use crate::hidpp_onboard::crc::crc_ccitt;
 use crate::hidpp_onboard::{parse_directory, profile, OnboardProfile, ProfileDirectory};
-use devhub_core::backend::HubResult;
+use devhub_core::backend::{HubError, HubResult};
 use devhub_core::model::*;
 use std::collections::BTreeMap;
 
@@ -23,6 +23,21 @@ pub const DIRECTORY_SECTOR: u16 = 0x0000;
 pub const ROM_PROFILES_BASE: u16 = 0x0100;
 /// ポーリング設定の id (有線機。mousefit.rs / demo.rs と同じ)。
 pub const SETTING_POLLING: &str = "polling_wired";
+
+/// getCurrentProfile の params[1] (`Hidpp::current_profile`) → 0 始まりの index。
+///
+/// G502 HERO は **1 始まり**で返す (実機確認: raw 3 のとき、センサーの 2400 DPI / 2 ms と
+/// 一致するのは sector 0x0003 = ディレクトリ entry 2)。setCurrentProfile が index + 1 を
+/// 送るのと対で、libratbag の `HIDPP20_QUIRK_INDEX_OFFSET` と同じ扱い (hidpp20.c:2281-2283)。
+/// 0 と `profile_count` 超えは不正応答として Err。
+pub fn profile_index(raw: u8, profile_count: u8) -> HubResult<u8> {
+    if raw == 0 || raw > profile_count {
+        return Err(HubError::Protocol(format!(
+            "getCurrentProfile が範囲外: {raw} (1..={profile_count})"
+        )));
+    }
+    Ok(raw - 1)
+}
 
 /// プロファイルをどこから読んだか。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

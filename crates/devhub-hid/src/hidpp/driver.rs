@@ -121,11 +121,13 @@ impl HidppDriver {
         &self.hp
     }
 
-    /// 現在プロファイル (0 始まり)。libratbag は getCurrentProfile の params[1] を
-    /// そのまま index として使う (hidpp20.c:2099-2129、INDEX_OFFSET quirk の機種だけ -1)。
+    /// 現在プロファイル (0 始まり)。デバイスは 1 始まりで返す (`driver_read::profile_index`)。
     fn active_profile(&self) -> HubResult<u8> {
-        let raw = self.hp.current_profile()?.unwrap_or(0);
-        Ok(raw.min(self.desc.profile_count.saturating_sub(1)))
+        let raw = self
+            .hp
+            .current_profile()?
+            .ok_or(HubError::Unsupported("OnboardProfiles (0x8100)"))?;
+        driver_read::profile_index(raw, self.desc.profile_count)
     }
 }
 

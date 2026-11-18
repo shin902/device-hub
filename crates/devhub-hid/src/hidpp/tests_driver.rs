@@ -15,7 +15,8 @@ const IDX: u8 = 0xFF;
 const F_ONB: u8 = 0x09;
 const F_DPI: u8 = 0x07;
 const F_RATE: u8 = 0x08;
-const SECTOR: usize = 255;
+/// G502 HERO 実機の getProfilesDescription と同じ 256B。
+const SECTOR: usize = 256;
 /// G502 HERO 風: プロファイル 5 個、ROM 3 個、ボタン 11。
 const PROFILES: u8 = 5;
 const ROMS: u8 = 3;
@@ -55,7 +56,7 @@ fn info() -> DeviceInfo {
 fn open_mock() -> HidppDriver {
     let h = Hidpp::new(Channel::mock(), IDX);
     feature_reply(&h, F_ONB);
-    let desc = [1, 2, 2, PROFILES, ROMS, 11, 16, 0x00, 0xFF, 1, 1];
+    let desc = [1, 2, 1, PROFILES, ROMS, 11, 16, 0x01, 0x00, 10, 1];
     h.ch.mock_reply(&frame(F_ONB, 0x0A, &desc));
     feature_reply(&h, F_DPI);
     h.ch.mock_reply(&frame(F_DPI, 0x1A, &[0, 0x00, 0x64, 0xE0, 0x32, 0x64, 0x00, 0, 0]));
@@ -129,8 +130,8 @@ fn open_builds_caps_from_device_replies() {
 fn read_user_profile_gives_stages_and_polling() {
     let d = open_mock();
     let h = d.hp_for_test();
-    // getCurrentProfile → params[1] = 1 (2 番目)
-    h.ch.mock_reply(&frame(F_ONB, 0x4A, &[0, 1]));
+    // getCurrentProfile → params[1] = 2 (1 始まり) → index 1 = sector 0x0002
+    h.ch.mock_reply(&frame(F_ONB, 0x4A, &[0, 2]));
     queue_sector(&d, &directory_sector());
     queue_sector(&d, &profile_sector(2, 1, [400, 800, 1600, 3200, 0]));
     // getSensorDpi → 現在 1600 (ステージ 2)
@@ -150,7 +151,7 @@ fn read_user_profile_gives_stages_and_polling() {
 fn read_falls_back_to_rom_when_directory_crc_is_broken() {
     let d = open_mock();
     let h = d.hp_for_test();
-    h.ch.mock_reply(&frame(F_ONB, 0x4A, &[0, 2]));
+    h.ch.mock_reply(&frame(F_ONB, 0x4A, &[0, 3]));
     let mut dir = directory_sector();
     dir[SECTOR - 1] ^= 0xFF;
     queue_sector(&d, &dir);
@@ -165,8 +166,27 @@ fn read_falls_back_to_rom_when_directory_crc_is_broken() {
     assert_eq!(m.stages.len(), 2);
     assert_eq!(m.active_stage, 0);
     assert_eq!(s.settings[SETTING_POLLING], SettingValue::Choice(1000));
-    // 現在プロファイル 2 (< ROM 数 3) → ROM 0x0103。
+    // raw 3 → index 2 (< ROM 数 3) → ROM 0x0103。
     assert_eq!(*read_sectors(&d).last().unwrap(), 0x0103);
+}
+
+#[test]
+fn profile_index_is_one_based() {
+    use super::driver_read::profile_index;
+    assert_eq!(profile_index(1, PROFILES).unwrap(), 0);
+    assert_eq!(profile_index(3, PROFILES).unwrap(), 2);
+    assert_eq!(profile_index(PROFILES, PROFILES).unwrap(), PROFILES - 1);
+    assert!(profile_index(0, PROFILES).is_err());
+    assert!(profile_index(PROFILES + 1, PROFILES).is_err());
+}
+
+#[test]
+fn read_rejects_current_profile_zero() {
+    let d = open_mock();
+    d.hp_for_test().ch.mock_reply(&frame(F_ONB, 0x4A, &[0, 0]));
+    assert!(d.read().is_err());
+    // 不正な index でセクタは読まない。
+    assert!(read_sectors(&d).is_empty());
 }
 
 #[test]

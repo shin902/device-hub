@@ -5,7 +5,7 @@
 //! 13-31 電源ブロック (未解釈・保持) / 32-95 ボタン 16x4B / 96-159 G-shift 側 16x4B /
 //! 160-207 名前 48B UTF-16LE / 208-229 LEDx2 (11B) / 230-251 未解釈 LED 領域 (保持) /
 //! 252-末尾-3 予備 (保持) / 末尾 2B CRC-CCITT (BE)。
-//! セクタサイズは引数で受け取る。G502 HERO は 0x8100 getProfilesDescription の 0x00ff = 255。
+//! セクタサイズは引数で受け取る。G502 HERO は 0x8100 getProfilesDescription の 0x0100 = 256 (実機確認)。
 
 use super::buttons::ButtonBinding;
 use super::crc;

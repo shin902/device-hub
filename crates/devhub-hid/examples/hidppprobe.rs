@@ -13,7 +13,7 @@
 //! `--all` はディレクトリの各エントリのセクタを memoryRead だけで読み、
 //! 16 進ダンプと要約 (レート・既定/シフト段・DPI・ボタン・LED) を出す。
 
-use devhub_hid::hidpp::driver_read::{read_directory, read_profile};
+use devhub_hid::hidpp::driver_read::{profile_index, read_directory, read_profile};
 use devhub_hid::hidpp::proto::{Hidpp, DEV_IDX_WIRED};
 use devhub_hid::hidpp_onboard::{profile, OnboardProfile, ProfileDirectory};
 use devhub_hid::transport::Channel;
@@ -54,7 +54,6 @@ fn main() {
     println!("report_rate_list: {:?}  (ms)", hp.report_rate_list());
     println!("report_rate:      {:?}  (ms)", hp.report_rate());
     println!("onboard_mode:     {:?}  (1=onboard, 2=host)", hp.onboard_mode());
-    println!("current_profile:  {:?}  (getCurrentProfile params[1])", hp.current_profile());
 
     let desc = match hp.onboard_profiles_desc() {
         Ok(Some(d)) => d,
@@ -83,12 +82,20 @@ fn main() {
         return;
     }
 
-    let index = hp
-        .current_profile()
-        .ok()
-        .flatten()
-        .unwrap_or(0)
-        .min(desc.profile_count.saturating_sub(1));
+    // getCurrentProfile は 1 始まり → 0 始まりの index へ (driver と同じ変換)。
+    let raw = hp.current_profile();
+    let index = match &raw {
+        Ok(Some(r)) => profile_index(*r, desc.profile_count),
+        _ => Err(devhub_core::backend::HubError::Unsupported("getCurrentProfile")),
+    };
+    println!("\ncurrent_profile:  raw {raw:?} (getCurrentProfile params[1], 1 始まり) → index {index:?}");
+    let index = match index {
+        Ok(i) => i,
+        Err(e) => {
+            println!("現在プロファイルを決められない: {e}");
+            return;
+        }
+    };
     match read_profile(&hp, &desc, dir.as_ref(), index) {
         Ok(r) => {
             println!(

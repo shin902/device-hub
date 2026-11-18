@@ -162,7 +162,7 @@ impl Hidpp {
     /// Writes a whole sector: memoryAddrWrite (sub_address 0, count = size)
     /// then 16-byte memoryWrite chunks, then memoryWriteEnd. A
     /// final partial chunk is zero-padded to 16 bytes (sector_size need not
-    /// be a multiple of 16 — G502-class devices use 255).
+    /// be a multiple of 16; G502 HERO reports 256 via getProfilesDescription).
     /// The caller computes and stores the CRC in the last 2 bytes beforehand
     /// (libratbag does CRC here, but that is `hidpp_onboard`'s job in this
     /// codebase).
