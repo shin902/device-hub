@@ -21,6 +21,8 @@ use std::sync::{Arc, Mutex};
 #[doc(hidden)]
 pub mod atk;
 #[doc(hidden)]
+pub mod hidpp;
+#[doc(hidden)]
 pub mod lamzu;
 #[allow(dead_code)]
 mod mousefit;
