@@ -4,12 +4,17 @@
 //! デバイスドライバとしての実装 (caps / read / apply) はこの上に載る別モジュール。
 
 pub mod driver;
+mod driver_buttons;
 pub mod driver_read;
 pub mod features;
 pub mod onboard_io;
 pub mod proto;
 #[cfg(test)]
 mod tests_driver;
+#[cfg(test)]
+mod tests_driver_buttons;
+#[cfg(test)]
+mod tests_driver_buttons_ui;
 #[cfg(test)]
 mod tests_features;
 #[cfg(test)]

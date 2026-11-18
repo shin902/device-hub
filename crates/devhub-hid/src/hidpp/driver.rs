@@ -5,6 +5,7 @@
 //! オンボードモード (hidpp20.c:1797-1800: 0=変更なし / 1=onboard / 2=host) は
 //! libratbag のように開いた時点で切り替えたりせず、読むだけにする。
 
+use super::driver_buttons;
 use super::driver_read::{self, SETTING_POLLING};
 use super::features::DpiList;
 use super::onboard_io::OnboardProfilesDesc;
@@ -46,7 +47,7 @@ pub(crate) fn open_with(hp: Hidpp, info: DeviceInfo) -> HubResult<HidppDriver> {
         .sensor_dpi_list(SENSOR)?
         .ok_or(HubError::Unsupported("AdjustableDPI (0x2201)"))?;
     let rates_ms = hp.report_rate_list()?.unwrap_or_default();
-    let caps = build_caps(&dpi, &rates_ms)?;
+    let caps = build_caps(&dpi, &rates_ms, desc.button_count)?;
     Ok(HidppDriver {
         hp,
         info: Mutex::new(info),
@@ -56,7 +57,7 @@ pub(crate) fn open_with(hp: Hidpp, info: DeviceInfo) -> HubResult<HidppDriver> {
 }
 
 /// DPI リストとレポートレート (ms の列) から caps を作る。
-fn build_caps(dpi: &DpiList, rates_ms: &[u8]) -> HubResult<Capabilities> {
+fn build_caps(dpi: &DpiList, rates_ms: &[u8], button_count: u8) -> HubResult<Capabilities> {
     let (dpi_min, dpi_max, dpi_step) = match dpi {
         DpiList::Range { min, max, step } => (*min, *max, u32::from(*step)),
         DpiList::Values(v) => {
@@ -83,6 +84,9 @@ fn build_caps(dpi: &DpiList, rates_ms: &[u8]) -> HubResult<Capabilities> {
             .help("マウスがPCへ位置を報告する頻度 (Hz)"),
         );
     }
+    let buttons = (0..usize::from(button_count))
+        .map(|i| ButtonSlot { name: driver_buttons::slot_name(i, usize::from(button_count)) })
+        .collect::<Vec<_>>();
     Ok(Capabilities {
         settings,
         mouse: Some(MouseCaps {
@@ -94,10 +98,9 @@ fn build_caps(dpi: &DpiList, rates_ms: &[u8]) -> HubResult<Capabilities> {
             xy_split: false,
             stage_colors: false,
             stage_toggle: false,
-            // ボタン・マクロはフェーズ 3。
-            buttons: vec![],
-            button_kinds: vec![],
-            require_left_click: false,
+            buttons,
+            button_kinds: driver_buttons::BUTTON_KINDS.to_vec(),
+            require_left_click: true,
             macros: None,
             live_buttons: vec![],
             adaptive_dpi: None,

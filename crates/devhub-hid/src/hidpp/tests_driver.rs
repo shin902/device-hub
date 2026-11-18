@@ -116,7 +116,11 @@ fn open_builds_caps_from_device_replies() {
     let m = caps.mouse.as_ref().unwrap();
     assert_eq!((m.dpi_min, m.dpi_max, m.dpi_step), (100, 25600, 50));
     assert_eq!((m.min_stages, m.max_stages), (1, 5));
-    assert!(m.buttons.is_empty());
+    assert_eq!(m.buttons.len(), 11);
+    assert_eq!(m.buttons[0].name, "G1 左クリック");
+    assert_eq!(m.buttons[10].name, "ホイール左チルト");
+    assert_eq!(m.button_kinds.len(), 6);
+    assert!(m.require_left_click);
     assert!(caps.lighting.is_empty());
     let spec = caps.setting(SETTING_POLLING).unwrap();
     let SettingKind::Choice { options } = &spec.kind else {
@@ -145,6 +149,45 @@ fn read_user_profile_gives_stages_and_polling() {
     assert_eq!(s.settings[SETTING_POLLING], SettingValue::Choice(500));
     assert_eq!(read_sectors(&d)[0], 0x0000);
     assert_eq!(*read_sectors(&d).last().unwrap(), 0x0002);
+}
+
+#[test]
+fn read_user_profile_exposes_buttons() {
+    let d = open_mock();
+    let h = d.hp_for_test();
+    h.ch.mock_reply(&frame(F_ONB, 0x4A, &[0, 2]));
+    queue_sector(&d, &directory_sector());
+    let mut sector = profile_sector(2, 1, [400, 800, 1600, 3200, 0]);
+    // probe3.log entry 0 と同じ割当 (G502 既定) を埋める。
+    let bindings = [
+        [0x80, 0x01, 0x00, 0x01], // G1 左
+        [0x80, 0x01, 0x00, 0x02], // G2 右
+        [0x80, 0x01, 0x00, 0x04], // G3 中
+        [0x80, 0x01, 0x00, 0x08], // G4 戻る
+        [0x80, 0x01, 0x00, 0x10], // G5 進む
+        [0x90, 0x07, 0xff, 0xff], // G6 DpiShift (スナイパー)
+        [0x90, 0x04, 0xff, 0xff], // G7 DpiDown
+        [0x90, 0x03, 0xff, 0xff], // G8 DpiUp
+        [0x90, 0x0a, 0xff, 0xff], // G9 ProfileCycle
+        [0x90, 0x02, 0xff, 0xff], // ホイール右
+        [0x90, 0x01, 0xff, 0xff], // ホイール左
+    ];
+    for (slot, b) in bindings.iter().enumerate() {
+        sector[32 + 4 * slot..36 + 4 * slot].copy_from_slice(b);
+    }
+    let crc = crc_ccitt(&sector[..SECTOR - 2]);
+    sector[SECTOR - 2..].copy_from_slice(&crc.to_be_bytes());
+    queue_sector(&d, &sector);
+    h.ch.mock_reply(&frame(F_DPI, 0x2A, &[0, 0x06, 0x40, 0x03, 0x20]));
+    let s = d.read().unwrap();
+    let m = s.mouse.unwrap();
+    assert_eq!(m.buttons.len(), 11);
+    assert_eq!(m.buttons[0], ButtonAction::Mouse(MouseFn::Left));
+    assert_eq!(m.buttons[5], ButtonAction::Dpi(DpiFn::Shift(400)));
+    assert_eq!(m.buttons[8], ButtonAction::ProfileCycle);
+    // ホイールチルトは MouseFn::ScrollRight として出る。
+    assert_eq!(m.buttons[9], ButtonAction::Mouse(MouseFn::ScrollRight));
+    assert_eq!(m.buttons[10], ButtonAction::Mouse(MouseFn::ScrollLeft));
 }
 
 #[test]

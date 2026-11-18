@@ -159,6 +159,11 @@ pub fn build_state(
             SettingValue::Choice(i64::from(p.report_rate_hz)),
         );
     }
+    let buttons = p
+        .buttons
+        .iter()
+        .map(|b| super::driver_buttons::binding_to_action(b, p))
+        .collect::<Vec<_>>();
     DeviceState {
         profile: ProfileState {
             active: active_profile,
@@ -168,7 +173,7 @@ pub fn build_state(
         mouse: Some(MouseState {
             stages,
             active_stage,
-            buttons: vec![],
+            buttons,
             macros: vec![],
             adaptive: None,
         }),
