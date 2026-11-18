@@ -6,11 +6,16 @@
 //! set_onboard_mode) は一切呼ばない。macOS / Windows どちらでも動く。
 //!
 //! ```text
-//! cargo run -p devhub-hid --example hidppprobe
+//! cargo run -p devhub-hid --example hidppprobe          # 現在プロファイルだけ
+//! cargo run -p devhub-hid --example hidppprobe -- --all # ディレクトリの全エントリ
 //! ```
+//!
+//! `--all` はディレクトリの各エントリのセクタを memoryRead だけで読み、
+//! 16 進ダンプと要約 (レート・既定/シフト段・DPI・ボタン・LED) を出す。
 
 use devhub_hid::hidpp::driver_read::{read_directory, read_profile};
 use devhub_hid::hidpp::proto::{Hidpp, DEV_IDX_WIRED};
+use devhub_hid::hidpp_onboard::{profile, OnboardProfile, ProfileDirectory};
 use devhub_hid::transport::Channel;
 
 const VID: u16 = 0x046D;
@@ -21,6 +26,7 @@ const USAGE: u16 = 0x02;
 const LONG_REPORT_LEN: usize = 20;
 
 fn main() {
+    let all = std::env::args().any(|a| a == "--all");
     let api = hidapi::HidApi::new().expect("hidapi init");
     let Some(info) = api.device_list().find(|d| {
         d.vendor_id() == VID
@@ -72,6 +78,11 @@ fn main() {
         }
     };
 
+    if all {
+        dump_all(&hp, desc.sector_size, desc.button_count, dir.as_ref());
+        return;
+    }
+
     let index = hp
         .current_profile()
         .ok()
@@ -87,17 +98,46 @@ fn main() {
                 r.bytes.len()
             );
             dump(&r.bytes);
-            let p = &r.profile;
-            println!("report_rate_hz:    {}", p.report_rate_hz);
-            println!("default_dpi_index: {}", p.default_dpi_index);
-            println!("shift_dpi_index:   {}", p.shift_dpi_index);
-            println!("dpi:               {:?}", p.dpi);
-            println!("name:              {:?}", p.name);
-            println!("buttons:           {:?}", p.buttons);
-            println!("leds:              {:?}", p.leds);
+            summary(&r.profile);
         }
         Err(e) => println!("profile index {index} read: {e}"),
     }
+}
+
+/// `--all`: ディレクトリの全エントリのセクタをダンプ + 要約 (memoryRead のみ)。
+fn dump_all(hp: &Hidpp, size: u16, button_count: u8, dir: Option<&ProfileDirectory>) {
+    let Some(dir) = dir else {
+        println!("\n--all: ディレクトリの CRC が不一致なのでエントリが無い");
+        return;
+    };
+    let buttons = usize::from(button_count).min(profile::MAX_BUTTONS);
+    for (i, entry) in dir.entries.iter().enumerate() {
+        println!(
+            "\n== entry {i}: sector {:#06x} (enabled: {})",
+            entry.address, entry.enabled
+        );
+        match hp.read_sector(entry.address, size) {
+            Ok(bytes) => {
+                dump(&bytes);
+                match profile::parse(&bytes, usize::from(size), buttons) {
+                    Ok(p) => summary(&p),
+                    Err(e) => println!("parse: {e}"),
+                }
+            }
+            Err(e) => println!("read: {e}"),
+        }
+    }
+}
+
+/// プロファイルの要約。
+fn summary(p: &OnboardProfile) {
+    println!("report_rate_hz:    {}", p.report_rate_hz);
+    println!("default_dpi_index: {}", p.default_dpi_index);
+    println!("shift_dpi_index:   {}", p.shift_dpi_index);
+    println!("dpi:               {:?}", p.dpi);
+    println!("name:              {:?}", p.name);
+    println!("buttons:           {:?}", p.buttons);
+    println!("leds:              {:?}", p.leds);
 }
 
 /// 16 バイトごとの 16 進ダンプ。

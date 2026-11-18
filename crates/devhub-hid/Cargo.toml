@@ -6,7 +6,9 @@ description = "HID transport layer for Device HUB. Implements devhub_core::backe
 
 [dependencies]
 devhub-core = { path = "../devhub-core" }
-hidapi = "2"
+# macOS: hidapi は既定で排他オープン (seize) し、キーボード collection を持つ機種
+# (G502 HERO if=1 等) が 0xE00002E2 not permitted で開けない → 共有オープン。Windows では no-op。
+hidapi = { version = "2", features = ["macos-shared-device"] }
 serde_json = "1"
 # 公式 configurator (hub.xsyd.top) のエクスポート復号 (CryptoJS AES / EVP_BytesToKey)
 aes = "0.8"
