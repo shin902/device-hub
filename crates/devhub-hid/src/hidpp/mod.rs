@@ -3,4 +3,5 @@
 //! `proto` は素のプロトコル (要求/応答の往復・機能 index のキャッシュ) だけを担う。
 //! デバイスドライバとしての実装 (caps / read / apply) はこの上に載る別モジュール。
 
+pub mod features;
 pub mod proto;

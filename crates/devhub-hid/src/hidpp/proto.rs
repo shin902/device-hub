@@ -85,7 +85,7 @@ pub struct FeatureInfo {
 /// (TASK.md の固定設計判断)。`transport::Channel::recv` は生バッファ (buf[0] = report ID)
 /// を返すので、ここで番号付きレポートとして解釈する。
 pub struct Hidpp {
-    ch: Channel,
+    pub(crate) ch: Channel,
     dev_idx: u8,
     /// 機能 ID → `FeatureInfo`。「機能が無い」(index 0) も再問い合わせを省くために
     /// 覚えておく (libratbag の `hidpp_root_get_feature_idx` 相当をキャッシュにしたもの)。
