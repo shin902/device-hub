@@ -265,6 +265,22 @@ pub const KNOWN: &[KnownDevice] = &[
         driver: DriverKind::Lamzu,
         verified: false,
     },
+    // ---------------------------------------------------------------- マウス (Logitech)
+    // G502 HERO 有線 — HID++ long collection (FF00:02、report 0x11) だけを開く。
+    // short (FF00:01) は別コレクションなので登録しない (Mac で列挙済み)。
+    KnownDevice {
+        vid: 0x046D,
+        pid: 0xC08B,
+        usage_page: Some(0xFF00),
+        usage: Some(0x02),
+        kind: DeviceKind::Mouse,
+        vendor: "Logitech",
+        model: "g502-hero",
+        name: "Logitech G502 HERO",
+        transport: Transport::Wired,
+        driver: DriverKind::Hidpp,
+        verified: false,
+    },
 ];
 
 /// 列挙結果 (VID/PID/usage) に合う既知デバイス。`0xFFFF` のプレースホルダは一致しない。
