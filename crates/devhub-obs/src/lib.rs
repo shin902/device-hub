@@ -6,21 +6,32 @@
 //! obs.dll は実行時に GetProcAddress で解決するので import lib は要らない。
 
 pub mod config;
+#[cfg(windows)]
 mod ffi;
 pub mod live;
 pub mod rawinput;
 pub mod render;
 
+// DEVHUB: ここから下は OBS プラグイン本体 (Windows 専用)。macOS は
+// config / live / rawinput / render (アプリ内プレビュー・examples 用) だけを提供する。
+
+#[cfg(windows)]
 use core::ffi::c_void;
+#[cfg(windows)]
 use std::collections::HashSet;
+#[cfg(windows)]
 use std::ffi::CString;
+#[cfg(windows)]
 use std::sync::atomic::AtomicPtr;
+#[cfg(windows)]
 use std::sync::Mutex;
 
+#[cfg(windows)]
 static MODULE: AtomicPtr<c_void> = AtomicPtr::new(core::ptr::null_mut());
 
 /// 起動診断ログ (%TEMP%\devhub_obs.log)。ホスト側の obs log には出せないので
 /// ファイルに直接書く — 問題切り分け用、常時 ON。
+#[cfg(windows)]
 fn logline(s: &str) {
     use std::io::Write;
     let p = format!(r"{}\devhub_obs.log", std::env::temp_dir().display());
@@ -33,10 +44,12 @@ fn logline(s: &str) {
     }
 }
 
+#[cfg(windows)]
 fn cs(s: &str) -> CString {
     CString::new(s).unwrap_or_else(|_| CString::new("?").unwrap())
 }
 
+#[cfg(windows)]
 struct Src {
     mode: render::Mode,
     font: Option<fontdue::Font>,
@@ -60,6 +73,7 @@ struct Src {
     last_tick: std::time::Instant,
 }
 
+#[cfg(windows)]
 impl Src {
     fn new(mode: render::Mode) -> Self {
         Self {
@@ -151,29 +165,37 @@ impl Src {
 
 // ---------------- ソースコールバック ----------------
 
+#[cfg(windows)]
 unsafe extern "C" fn name_both(_d: *mut c_void) -> *const u8 {
     lt(c"devhub.src.both", c"Device HUB Live")
 }
+#[cfg(windows)]
 unsafe extern "C" fn name_kb(_d: *mut c_void) -> *const u8 {
     lt(c"devhub.src.kb", c"Device HUB Keyboard")
 }
+#[cfg(windows)]
 unsafe extern "C" fn name_mouse(_d: *mut c_void) -> *const u8 {
     lt(c"devhub.src.mouse", c"Device HUB Mouse")
 }
 
+
+#[cfg(windows)]
 unsafe extern "C" fn create_both(_s: *mut c_void, _src: *mut c_void) -> *mut c_void {
     logline("create (both)");
     Box::into_raw(Box::new(Src::new(render::Mode::Both))) as *mut c_void
 }
+#[cfg(windows)]
 unsafe extern "C" fn create_kb(_s: *mut c_void, _src: *mut c_void) -> *mut c_void {
     logline("create (kb)");
     Box::into_raw(Box::new(Src::new(render::Mode::Kb))) as *mut c_void
 }
+#[cfg(windows)]
 unsafe extern "C" fn create_mouse(_s: *mut c_void, _src: *mut c_void) -> *mut c_void {
     logline("create (mouse)");
     Box::into_raw(Box::new(Src::new(render::Mode::Mouse))) as *mut c_void
 }
 
+#[cfg(windows)]
 unsafe extern "C" fn destroy(d: *mut c_void) {
     if !d.is_null() {
         drop(Box::from_raw(d as *mut Src));
@@ -181,6 +203,7 @@ unsafe extern "C" fn destroy(d: *mut c_void) {
 }
 
 /// サイズは表示キー・テーマ・倍率で変わるので、最後に焼いたビットマップに合わせる。
+#[cfg(windows)]
 unsafe extern "C" fn get_width(d: *mut c_void) -> u32 {
     let s = &*(d as *mut Src);
     match &s.pix {
@@ -188,6 +211,7 @@ unsafe extern "C" fn get_width(d: *mut c_void) -> u32 {
         None => render::size(&render_default_live(), s.mode, &s.cur_vis()).0,
     }
 }
+#[cfg(windows)]
 unsafe extern "C" fn get_height(d: *mut c_void) -> u32 {
     let s = &*(d as *mut Src);
     match &s.pix {
@@ -196,10 +220,12 @@ unsafe extern "C" fn get_height(d: *mut c_void) -> u32 {
     }
 }
 
+#[cfg(windows)]
 fn render_default_live() -> live::Live {
     live::Live::default()
 }
 
+#[cfg(windows)]
 impl Src {
     /// OBS プロパティ + アプリ設定を合成した描画設定。
     /// `obs_all` (「すべての表示設定を OBS で行う」) のソースはアプリ設定を見ない。
@@ -223,6 +249,7 @@ impl Src {
 }
 
 /// OBS 設定文字列を Rust String に (UTF-8、先頭 max バイトまで)。
+#[cfg(windows)]
 unsafe fn cstr_text(p: *const u8, max: usize) -> String {
     if p.is_null() {
         return String::new();
@@ -241,6 +268,7 @@ unsafe fn cstr_text(p: *const u8, max: usize) -> String {
 /// 返るポインタは OBS のルックアップ表・static・または引数の CStr — いずれも
 /// この式の評価中は生きており、OBS は desc をコピーして持つので安全。
 /// (get_name/description に渡す fallback は 'static の CStr に限る)
+#[cfg(windows)]
 unsafe fn lt(key: &std::ffi::CStr, fallback: &std::ffi::CStr) -> *const u8 {
     let m = MODULE.load(std::sync::atomic::Ordering::Relaxed);
     if let (Some(api), false) = (ffi::resolve(), m.is_null()) {
@@ -255,9 +283,11 @@ unsafe fn lt(key: &std::ffi::CStr, fallback: &std::ffi::CStr) -> *const u8 {
 }
 
 /// OBS の色データ (int、下位から R,G,B,A の 8bit) を pack/unpack。
+#[cfg(windows)]
 fn pack_rgb(r: i64, g: i64, b: i64) -> i64 {
     r | (g << 8) | (b << 16) | (255i64 << 24)
 }
+#[cfg(windows)]
 fn unpack_rgb(v: i64) -> [u8; 4] {
     [
         (v & 0xff) as u8,
@@ -268,6 +298,7 @@ fn unpack_rgb(v: i64) -> [u8; 4] {
 }
 
 /// グラフィックススレッド — テクスチャを捨てる (create 側で遅延生成)。
+#[cfg(windows)]
 unsafe extern "C" fn deactivate(d: *mut c_void) {
     let s = &mut *(d as *mut Src);
     if !s.tex.is_null() {
@@ -282,6 +313,7 @@ unsafe extern "C" fn deactivate(d: *mut c_void) {
 
 /// 既定値: タイトル/ラベル ON、アクセント=アプリ設定。`obs_cfg` は OFF — 既存シーンの
 /// 見た目を変えない。詳細設定は OverlayCfg の既定と同じ (ON にしたときそのまま使える)。
+#[cfg(windows)]
 unsafe extern "C" fn get_defaults(settings: *mut c_void) {
     let Some(api) = ffi::resolve() else { return };
     let dbool = |n: &std::ffi::CStr, v: bool| {
@@ -318,6 +350,7 @@ unsafe extern "C" fn get_defaults(settings: *mut c_void) {
 
 /// 設定読み込み。`sk{i}`/`sb{i}` が true のインデックスを表示集合に入れる
 /// (全て false = すべて表示。1 つでも true があればそれだけを表示)。
+#[cfg(windows)]
 unsafe extern "C" fn update(d: *mut c_void, settings: *mut c_void) {
     let Some(api) = ffi::resolve() else { return };
     let s = &mut *(d as *mut Src);
@@ -406,6 +439,7 @@ unsafe extern "C" fn update(d: *mut c_void, settings: *mut c_void) {
 
 /// プロパティ UI。キー/ボタンは接続中デバイスのレイアウトから生成する
 /// (キーボード未接続時は既知の SU66 レイアウトを使う)。
+#[cfg(windows)]
 unsafe extern "C" fn get_properties(d: *mut c_void) -> *mut c_void {
     let Some(api) = ffi::resolve() else {
         return core::ptr::null_mut();
@@ -637,6 +671,7 @@ unsafe extern "C" fn get_properties(d: *mut c_void) -> *mut c_void {
     props
 }
 
+#[cfg(windows)]
 unsafe extern "C" fn video_render(d: *mut c_void, _e: *mut c_void) {
     let Some(api) = ffi::resolve() else {
         logline("video_render: resolve() failed");
@@ -773,6 +808,7 @@ unsafe extern "C" fn video_render(d: *mut c_void, _e: *mut c_void) {
 
 /// `obs_register_source_s` は構造体をコピーするのでローカル生成でよい
 /// (生ポインタを含むので static にはできない)。
+#[cfg(windows)]
 fn source_info(
     id: &'static std::ffi::CStr,
     get_name: unsafe extern "C" fn(*mut c_void) -> *const u8,
@@ -800,17 +836,22 @@ fn source_info(
 }
 
 // ---------------- モジュールエントリ ----------------
+// DEVHUB: OBS プラグインのエクスポートは Windows 専リンク要件が無ければ割愛。
+// macOS では OBS プラグインを提供しない (ffi.rs も cfg(windows))。
 
+#[cfg(windows)]
 #[no_mangle]
 pub extern "C" fn obs_module_set_pointer(m: *mut c_void) {
     MODULE.store(m, std::sync::atomic::Ordering::Relaxed);
 }
 
+#[cfg(windows)]
 #[no_mangle]
 pub extern "C" fn obs_current_module() -> *mut c_void {
     MODULE.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+#[cfg(windows)]
 #[no_mangle]
 pub extern "C" fn obs_module_ver() -> u32 {
     match ffi::resolve() {
@@ -819,11 +860,13 @@ pub extern "C" fn obs_module_ver() -> u32 {
     }
 }
 
+#[cfg(windows)]
 #[no_mangle]
 pub extern "C" fn obs_module_name() -> *const u8 {
     c"devhub-obs".as_ptr() as *const u8
 }
 
+#[cfg(windows)]
 #[no_mangle]
 pub extern "C" fn obs_module_description() -> *const u8 {
     unsafe {
@@ -834,11 +877,13 @@ pub extern "C" fn obs_module_description() -> *const u8 {
     }
 }
 
+#[cfg(windows)]
 #[no_mangle]
 pub extern "C" fn obs_module_author() -> *const u8 {
     c"Device HUB".as_ptr() as *const u8
 }
 
+#[cfg(windows)]
 #[no_mangle]
 pub extern "C" fn obs_module_load() -> bool {
     let Some(api) = ffi::resolve() else {
@@ -857,5 +902,6 @@ pub extern "C" fn obs_module_load() -> bool {
     true
 }
 
+#[cfg(windows)]
 #[no_mangle]
 pub extern "C" fn obs_module_unload() {}

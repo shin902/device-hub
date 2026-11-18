@@ -1,10 +1,11 @@
 # vendor/ — GPUI への GPU backdrop-filter 追加 (Liquid Glass の下地)
 
-`Cargo.toml` の `[patch.crates-io]` が、crates.io の `gpui-pre` / `gpui-pre-windows` **0.3.11** の代わりに
+`Cargo.toml` の `[patch.crates-io]` が、crates.io の `gpui-pre` / `gpui-pre-windows` **0.3.11**
+(macOS 描画は `gpui-pre-apple` / `gpui-pre-macos` **0.3.12**) の代わりに
 このディレクトリを使う。どちらも Apache-2.0 (各 `LICENSE-APACHE` を参照)。元は Zed の GPUI。
 改変箇所には `DEVHUB` のコメントを付けている。
 
-## 原本との差分 (crates.io 0.3.11 比)
+## 原本との差分 (crates.io 0.3.11 比。apple/macos は 0.3.12 比)
 
 | ファイル | 内容 |
 | --- | --- |
@@ -12,6 +13,8 @@
 | `gpui-pre-windows/src/backdrop.rs` (新規) | ダウンサンプル → 分離ブラー → 屈折・彩度・明るさ・リムライトの合成 |
 | `gpui-pre-windows/src/gpu_timer.rs` (新規) | `DEVHUB_GPUI_GPUTIME=1` のときだけ動く GPU タイムスタンプ計測 |
 | `gpui-pre-windows/src/directx_renderer.rs`, `shaders.hlsl`, `build.rs` | backdrop 用パスとシェーダーの組み込み |
+| `gpui-pre-apple/src/metal_renderer.rs`, `shaders.metal` | `PolychromeSprites` の `nearest` を最近傍サンプラのパイプライン (`polychrome_sprite_nearest_fragment`) で受ける。`PrimitiveBatch::Backdrops` は読み捨て (macOS は GPU backdrop 非対応、非ガラス経路で描画) |
+| `gpui-pre-macos/src/window.rs` | Rust 1.95 で未安定の `Option::map_or_default` を match に展開 (3 箇所) |
 
 `Cargo.toml.orig` は crates.io 配布物のもの。行末が原本と違うため、単純な diff は行数が膨らむ。
 差分を取るなら `diff --strip-trailing-cr` を使う。

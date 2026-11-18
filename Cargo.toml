@@ -8,9 +8,13 @@ license = "MIT OR Apache-2.0"
 
 # GPU backdrop-filter (Liquid Glass の下地) を GPUI に足すため、core と
 # Windows 描画を vendor/ で差し替える。変更点は vendor/README.md。
+# DEVHUB: macOS 描画 (gpui-pre-apple / gpui-pre-macos) も vendor 化 —
+# nearest サンプラ対応と Rust 1.95 向けの API 置換のみ。
 [patch.crates-io]
 gpui-pre = { path = "vendor/gpui-pre" }
 gpui-pre-windows = { path = "vendor/gpui-pre-windows" }
+gpui-pre-apple = { path = "vendor/gpui-pre-apple" }
+gpui-pre-macos = { path = "vendor/gpui-pre-macos" }
 
 [profile.release]
 strip = true
