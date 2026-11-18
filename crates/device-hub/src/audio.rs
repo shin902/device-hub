@@ -11,6 +11,7 @@ use std::sync::{Mutex, OnceLock};
 /// バンド数 (キーボードの横 15 列に対応)。
 pub const NBANDS: usize = 15;
 /// Goertzel の窓幅 (48kHz で約 21ms)。
+#[cfg(windows)]
 const N: usize = 1024;
 
 static BANDS: OnceLock<Mutex<Vec<f32>>> = OnceLock::new();
@@ -35,6 +36,7 @@ pub fn start() {
     });
 }
 
+#[cfg(windows)]
 fn put(v: &[f32]) {
     if let Some(m) = BANDS.get() {
         if let Ok(mut b) = m.lock() {
@@ -44,6 +46,7 @@ fn put(v: &[f32]) {
 }
 
 /// バンド中心周波数 (60..16000Hz を対数配分)。
+#[cfg(windows)]
 fn band_freqs() -> [f32; NBANDS] {
     let mut f = [0f32; NBANDS];
     let lo = 60f32.ln();
@@ -55,6 +58,7 @@ fn band_freqs() -> [f32; NBANDS] {
 }
 
 /// Goertzel — buf の中の freq 成分の正規化強度 (0..1 付近)。
+#[cfg(windows)]
 fn goertzel(buf: &[f32], sr: f32, freq: f32) -> f32 {
     let w = 2. * std::f32::consts::PI * freq / sr;
     let cw = 2. * w.cos();

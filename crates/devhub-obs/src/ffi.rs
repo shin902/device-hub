@@ -2,7 +2,9 @@
 //!
 //! `GetModuleHandleA("obs")` でホストの libobs を取り、`GetProcAddress` で
 //! 必要なシンボルだけ拾う。見つからないシンボルは Option で残す。
+//! DEVHUB: macOS では OBS プラグインを提供しない — このモジュールは Windows 専用。
 
+#![cfg(windows)]
 #![allow(non_snake_case)]
 
 use core::ffi::c_void;
