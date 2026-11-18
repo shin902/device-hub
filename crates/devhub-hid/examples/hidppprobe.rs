@@ -9,7 +9,11 @@
 //! cargo run -p devhub-hid --example hidppprobe                 # 現在プロファイルだけ
 //! cargo run -p devhub-hid --example hidppprobe -- --all        # ディレクトリの全エントリ
 //! cargo run -p devhub-hid --example hidppprobe -- --write-test # 現在プロファイルに同じバイトを書き戻す
+//! cargo run --release -p devhub-hid --example hidppprobe -- --timing # ドライバの往復数と時間 (読むだけ)
 //! ```
+//!
+//! `--timing` はアプリと同じ `hidpp::driver::open` → `read()` → `read()` (キャッシュ) を
+//! 実行し、それぞれの HID++ 往復数と ms を出す。書き込みはしない。
 //!
 //! `--write-test` はドライバと同じ書き込み経路 (`driver_write::write_active_profile`) で
 //! 現在プロファイルを**変更なし**で書き直し、読み戻して元のバイトと比べて OK / 差分を出す。
@@ -19,7 +23,9 @@
 //! 16 進ダンプと要約 (レート・既定/シフト段・DPI・ボタン・LED) を出す。
 
 use devhub_hid::hidpp::driver_read::{profile_index, read_directory, read_profile};
-use devhub_hid::hidpp::driver_write::{diff_offsets, write_active_profile};
+use devhub_core::backend::DeviceDriver;
+use devhub_core::model::*;
+use devhub_hid::hidpp::driver_write::{diff_offsets, write_active_profile, OnIdentical};
 use devhub_hid::hidpp::onboard_io::OnboardProfilesDesc;
 use devhub_hid::hidpp::proto::{Hidpp, DEV_IDX_WIRED};
 use devhub_hid::hidpp_onboard::{profile, OnboardProfile, ProfileDirectory};
@@ -35,6 +41,7 @@ const LONG_REPORT_LEN: usize = 20;
 fn main() {
     let all = std::env::args().any(|a| a == "--all");
     let write_test = std::env::args().any(|a| a == "--write-test");
+    let timing = std::env::args().any(|a| a == "--timing");
     let api = hidapi::HidApi::new().expect("hidapi init");
     let Some(info) = api.device_list().find(|d| {
         d.vendor_id() == VID
@@ -47,6 +54,10 @@ fn main() {
     };
     println!("path: {:?}", info.path());
     let dev = info.open_device(&api).expect("open");
+    if timing {
+        report_timing(dev);
+        return;
+    }
     let hp = Hidpp::new(
         Channel::open(dev, LONG_REPORT_LEN, LONG_REPORT_LEN),
         DEV_IDX_WIRED,
@@ -127,7 +138,8 @@ fn main() {
 /// `--write-test`: 変更なしで書き込み経路を通し、読み戻して元のバイトと比べる。
 fn rewrite_same_bytes(hp: &Hidpp, desc: &OnboardProfilesDesc, sector: u16, original: &[u8]) {
     println!("\n== write-test: sector {sector:#06x} に同じバイトを書き戻す");
-    if let Err(e) = write_active_profile(hp, desc, |_| Ok(())) {
+    let load = || devhub_hid::hidpp::driver_read::read_active_profile(hp, desc);
+    if let Err(e) = write_active_profile(hp, desc, load, |_| Ok(()), OnIdentical::Rewrite) {
         println!("write-test: 中止/失敗: {e}");
         return;
     }
@@ -143,6 +155,52 @@ fn rewrite_same_bytes(hp: &Hidpp, desc: &OnboardProfilesDesc, sector: u16, origi
         }
         Err(e) => println!("write-test: 読み戻し失敗: {e}"),
     }
+}
+
+/// `--timing`: ドライバの open / 1 回目 read / 2 回目 read (キャッシュ) の往復数と ms。
+fn report_timing(dev: hidapi::HidDevice) {
+    let info = DeviceInfo {
+        id: DeviceId("hid:046d:c08b:probe".into()),
+        kind: DeviceKind::Mouse,
+        name: "G502 HERO".into(),
+        vendor: "Logitech".into(),
+        model: "g502-hero".into(),
+        vid: VID,
+        pid: PID,
+        transport: Transport::Wired,
+        firmware: None,
+        dongle_firmware: None,
+        serial: None,
+        driver: DriverKind::Hidpp,
+        battery: None,
+        supported: true,
+        asleep: false,
+        board_id: None,
+    };
+    let t = std::time::Instant::now();
+    let drv = match devhub_hid::hidpp::driver::open(dev, info) {
+        Ok(d) => d,
+        Err(e) => {
+            println!("open: {e}");
+            return;
+        }
+    };
+    let mut last = 0;
+    let mut step = |label: &str, t: std::time::Instant, count: u32| {
+        let ms = t.elapsed().as_secs_f64() * 1000.0;
+        println!("{label:<14} {:>3} 往復  {ms:>7.1} ms", count - last);
+        last = count;
+    };
+    step("open", t, drv.request_count());
+    for label in ["read (1 回目)", "read (2 回目)"] {
+        let t = std::time::Instant::now();
+        let r = drv.read();
+        step(label, t, drv.request_count());
+        if let Err(e) = r {
+            println!("  read: {e}");
+        }
+    }
+    println!("info().firmware: {:?}", drv.info().firmware);
 }
 
 /// `--all`: ディレクトリの全エントリのセクタをダンプ + 要約 (memoryRead のみ)。

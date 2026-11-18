@@ -1,14 +1,15 @@
 //! HID++ オンボードプロファイルへの書き込み (現在プロファイルのセクタ 1 個だけ)。
 //!
-//! 手順: getOnboardMode (1=onboard 以外は拒否・切り替えない) → getCurrentProfile →
-//! ディレクトリ → プロファイルを読む → ROM なら拒否 (ディレクトリは作らない) →
-//! 読んだ構造体を編集 → `profile::serialize` (CRC) → `write_sector` → 読み戻して全バイト照合。
+//! 手順: getOnboardMode (1=onboard 以外は拒否・切り替えない) → 現在プロファイルを得る
+//! (`load`: ドライバはキャッシュ、probe は毎回読む) → ROM なら拒否 (ディレクトリは作らない) →
+//! 読んだ構造体を編集 → `profile::serialize` (CRC) → 読んだバイトと同じなら書かない
+//! (`OnIdentical::Skip`) → `write_sector` → 読み戻して全バイト照合。
 //!
 //! 安全策: 編集前の構造体を serialize したものが読んだバイトと一致しない (= 往復で
 //! 変わる領域がある) ときは書かない。これで「編集した箇所 + CRC」以外は必ず元のまま。
 
 use super::driver_buttons::action_to_binding;
-use super::driver_read::{read_active_profile, ProfileSource, SETTING_POLLING};
+use super::driver_read::{ProfileRead, ProfileSource, SETTING_POLLING};
 use super::onboard_io::OnboardProfilesDesc;
 use super::proto::Hidpp;
 use crate::hidpp_onboard::buttons::ButtonBinding;
@@ -23,20 +24,41 @@ const LEFT_MASK: u16 = 1;
 /// 読み戻し不一致のエラーに載せる差分オフセットの上限。
 const DIFF_REPORT_MAX: usize = 8;
 
+/// 編集後のバイトが読んだバイトと同じときの扱い。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OnIdentical {
+    /// 書き込みも読み戻しもしない (ドライバの既定)。
+    Skip,
+    /// それでも書いて読み戻す (`hidppprobe --write-test` の書き込み経路検証用)。
+    Rewrite,
+}
+
+/// 書き込みの結果。
+#[derive(Debug)]
+pub enum WriteOutcome {
+    /// 書いて読み戻しが一致した。`read` は読み戻した (= 検証済みの) セクタと構造体。
+    Written { index: u8, read: Box<ProfileRead> },
+    /// 編集してもバイトが変わらなかったので書かなかった。
+    Unchanged,
+}
+
 /// 現在プロファイルを `edit` で書き換えて同じセクタへ書き、読み戻して照合する。
+/// `load` は (0 始まりの現在 index, そのプロファイル) を返す。オンボードモード確認の後に呼ぶ。
 /// `edit` が Err を返したら何も書かない。
 pub fn write_active_profile(
     hp: &Hidpp,
     desc: &OnboardProfilesDesc,
+    load: impl FnOnce() -> HubResult<(u8, ProfileRead)>,
     edit: impl FnOnce(&mut OnboardProfile) -> HubResult<()>,
-) -> HubResult<()> {
+    on_identical: OnIdentical,
+) -> HubResult<WriteOutcome> {
     let mode = hp
         .onboard_mode()?
         .ok_or(HubError::Unsupported("OnboardProfiles (0x8100)"))?;
     if mode != ONBOARD_MODE_ONBOARD {
         return Err(HubError::Unsupported("オンボードモード以外 (ホストモード) への書き込み"));
     }
-    let (_, read) = read_active_profile(hp, desc)?;
+    let (index, read) = load()?;
     if read.source == ProfileSource::Rom {
         return Err(HubError::Unsupported("ROM プロファイル"));
     }
@@ -50,6 +72,9 @@ pub fn write_active_profile(
     let mut edited = read.profile;
     edit(&mut edited)?;
     let bytes = profile::serialize(&edited, size);
+    if on_identical == OnIdentical::Skip && bytes == read.bytes {
+        return Ok(WriteOutcome::Unchanged);
+    }
     hp.write_sector(read.sector, &bytes)?;
     let back = hp.read_sector(read.sector, desc.sector_size)?;
     let diff = diff_offsets(&bytes, &back);
@@ -61,7 +86,13 @@ pub fn write_active_profile(
             diff.len()
         )));
     }
-    Ok(())
+    let read = ProfileRead {
+        source: ProfileSource::User,
+        sector: read.sector,
+        bytes: back,
+        profile: edited,
+    };
+    Ok(WriteOutcome::Written { index, read: Box::new(read) })
 }
 
 /// 2 つのバイト列で値が異なる offset (長さが違えば短い方の末尾以降も差分)。

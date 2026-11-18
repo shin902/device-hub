@@ -8,7 +8,8 @@
 
 use super::driver_buttons;
 use super::driver_read::{self, SETTING_POLLING};
-use super::driver_write;
+use super::driver_read::ProfileRead;
+use super::driver_write::{self, OnIdentical, WriteOutcome};
 use super::features::DpiList;
 use super::onboard_io::OnboardProfilesDesc;
 use super::proto::{Hidpp, DEV_IDX_WIRED};
@@ -28,9 +29,20 @@ const POLLING_HZ: [u16; 4] = [125, 250, 500, 1000];
 
 pub struct HidppDriver {
     hp: Hidpp,
-    info: Mutex<DeviceInfo>,
+    /// open 時に FW 文字列まで確定した情報 (`info()` は HID 往復しない)。
+    info: DeviceInfo,
     desc: OnboardProfilesDesc,
     caps: Capabilities,
+    /// 現在プロファイルのセクタのキャッシュ。getCurrentProfile が別の index を返したとき・
+    /// 空のとき・書き込み失敗後だけ読み直す。書き込み成功時は読み戻した検証済みバイトで更新する。
+    /// ディレクトリは書かないので、index が変わったときに一緒に読み直すだけで足りる。
+    cache: Mutex<Option<CachedProfile>>,
+}
+
+/// キャッシュ 1 件: 0 始まりの profile index とそのセクタ。
+struct CachedProfile {
+    index: u8,
+    read: ProfileRead,
 }
 
 /// 実機を開く (有線なので device index 0xFF)。
@@ -40,8 +52,9 @@ pub fn open(dev: hidapi::HidDevice, info: DeviceInfo) -> HubResult<HidppDriver> 
 }
 
 /// プロトコル層から作る (テストはモック Channel で呼ぶ)。
-/// オンボードプロファイル記述・DPI リスト・レポートレート一覧を読んで caps を確定する。
-pub(crate) fn open_with(hp: Hidpp, info: DeviceInfo) -> HubResult<HidppDriver> {
+/// オンボードプロファイル記述・DPI リスト・レポートレート一覧を読んで caps を確定し、
+/// FW 文字列を読んで `info` に入れる (読めなければ None のまま。open は失敗させない)。
+pub(crate) fn open_with(hp: Hidpp, mut info: DeviceInfo) -> HubResult<HidppDriver> {
     let desc = hp
         .onboard_profiles_desc()?
         .ok_or(HubError::Unsupported("OnboardProfiles (0x8100)"))?;
@@ -50,11 +63,16 @@ pub(crate) fn open_with(hp: Hidpp, info: DeviceInfo) -> HubResult<HidppDriver> {
         .ok_or(HubError::Unsupported("AdjustableDPI (0x2201)"))?;
     let rates_ms = hp.report_rate_list()?.unwrap_or_default();
     let caps = build_caps(&dpi, &rates_ms, desc.button_count)?;
+    if let Ok(Some(fw)) = hp.main_firmware_string() {
+        info.firmware = Some(fw);
+    }
+    info.supported = true;
     Ok(HidppDriver {
         hp,
-        info: Mutex::new(info),
+        info,
         desc,
         caps,
+        cache: Mutex::new(None),
     })
 }
 
@@ -126,22 +144,56 @@ impl HidppDriver {
         &self.hp
     }
 
-    /// 現在プロファイルへ `change` を書く (読み → 編集 → 書き → 読み戻し照合)。
+    /// これまでの HID++ 要求数 (`hidppprobe --timing` 用)。
+    pub fn request_count(&self) -> u32 {
+        self.hp.request_count()
+    }
+
+    fn lock_cache(&self) -> std::sync::MutexGuard<'_, Option<CachedProfile>> {
+        self.cache.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    /// 現在プロファイル (index, セクタ)。getCurrentProfile は毎回送り、
+    /// キャッシュと index が同じならセクタは読まない。
+    fn active_read(&self) -> HubResult<(u8, ProfileRead)> {
+        let index = driver_read::current_profile_index(&self.hp, &self.desc)?;
+        let mut cache = self.lock_cache();
+        if let Some(c) = cache.as_ref().filter(|c| c.index == index) {
+            return Ok((index, c.read.clone()));
+        }
+        let (_, dir) = driver_read::read_directory(&self.hp, &self.desc)?;
+        let read = driver_read::read_profile(&self.hp, &self.desc, dir.as_ref(), index)?;
+        *cache = Some(CachedProfile { index, read: read.clone() });
+        Ok((index, read))
+    }
+
+    /// 現在プロファイルへ `change` を書く (編集 → 同一なら省略 → 書き → 読み戻し照合)。
     fn write_profile(&self, change: &Change) -> HubResult<()> {
-        driver_write::write_active_profile(&self.hp, &self.desc, |p| {
-            driver_write::edit_profile(p, change, &self.caps)
-        })
+        let outcome = driver_write::write_active_profile(
+            &self.hp,
+            &self.desc,
+            || self.active_read(),
+            |p| driver_write::edit_profile(p, change, &self.caps),
+            OnIdentical::Skip,
+        );
+        match outcome {
+            Ok(WriteOutcome::Written { index, read }) => {
+                *self.lock_cache() = Some(CachedProfile { index, read: *read });
+                Ok(())
+            }
+            Ok(WriteOutcome::Unchanged) => Ok(()),
+            Err(e) => {
+                // 途中で失敗したらデバイス側の中身が分からないので次回読み直す。
+                *self.lock_cache() = None;
+                Err(e)
+            }
+        }
     }
 }
 
 impl DeviceDriver for HidppDriver {
     fn info(&self) -> DeviceInfo {
-        let mut i = self.info.lock().unwrap_or_else(|p| p.into_inner()).clone();
-        if let Ok(Some(fw)) = self.hp.main_firmware_string() {
-            i.firmware = Some(fw);
-        }
-        i.supported = true;
-        i
+        self.info.clone()
     }
 
     fn caps(&self) -> Capabilities {
@@ -149,7 +201,7 @@ impl DeviceDriver for HidppDriver {
     }
 
     fn read(&self) -> HubResult<DeviceState> {
-        let (active, read) = driver_read::read_active_profile(&self.hp, &self.desc)?;
+        let (active, read) = self.active_read()?;
         let current_dpi = self.hp.sensor_dpi(SENSOR).ok().flatten().map(|(d, _)| d);
         let with_polling = self.caps.setting(SETTING_POLLING).is_some();
         Ok(driver_read::build_state(
@@ -163,7 +215,7 @@ impl DeviceDriver for HidppDriver {
     fn apply(&self, change: &Change) -> HubResult<()> {
         match change {
             Change::ActiveStage(index) => {
-                let (_, read) = driver_read::read_active_profile(&self.hp, &self.desc)?;
+                let (_, read) = self.active_read()?;
                 let dpi = driver_write::stage_dpi(&read.profile, *index)?;
                 self.hp.set_sensor_dpi(SENSOR, dpi)
             }

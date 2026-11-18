@@ -17,6 +17,8 @@ mod tests_driver_buttons;
 #[cfg(test)]
 mod tests_driver_buttons_ui;
 #[cfg(test)]
+mod tests_driver_cache;
+#[cfg(test)]
 mod tests_driver_write;
 #[cfg(test)]
 mod tests_g502_sectors;

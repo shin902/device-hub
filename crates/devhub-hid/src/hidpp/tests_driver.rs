@@ -15,6 +15,7 @@ pub(super) const IDX: u8 = 0xFF;
 pub(super) const F_ONB: u8 = 0x09;
 pub(super) const F_DPI: u8 = 0x07;
 pub(super) const F_RATE: u8 = 0x08;
+pub(super) const F_FW: u8 = 0x02;
 /// G502 HERO 実機の getProfilesDescription と同じ 256B。
 pub(super) const SECTOR: usize = 256;
 /// G502 HERO 風: プロファイル 5 個、ROM 3 個、ボタン 11。
@@ -52,7 +53,8 @@ fn info() -> DeviceInfo {
     }
 }
 
-/// open の応答: desc → DPI リスト (100–25600 step 50) → レート (1/2/4/8ms)。
+/// open の応答: desc → DPI リスト (100–25600 step 50) → レート (1/2/4/8ms) →
+/// FW (エンティティ 1 個 "U1 12.03.B0045")。
 pub(super) fn open_mock() -> HidppDriver {
     let h = Hidpp::new(Channel::mock(), IDX);
     feature_reply(&h, F_ONB);
@@ -62,6 +64,9 @@ pub(super) fn open_mock() -> HidppDriver {
     h.ch.mock_reply(&frame(F_DPI, 0x1A, &[0, 0x00, 0x64, 0xE0, 0x32, 0x64, 0x00, 0, 0]));
     feature_reply(&h, F_RATE);
     h.ch.mock_reply(&frame(F_RATE, 0x0A, &[0b1000_1011]));
+    feature_reply(&h, F_FW);
+    h.ch.mock_reply(&frame(F_FW, 0x0A, &[1]));
+    h.ch.mock_reply(&frame(F_FW, 0x1A, &[0, b'U', b'1', b' ', 0x12, 0x03, 0x00, 0x45]));
     open_with(h, info()).unwrap()
 }
 

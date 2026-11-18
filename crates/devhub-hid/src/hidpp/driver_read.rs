@@ -65,7 +65,7 @@ pub enum ProfileSource {
 }
 
 /// 読み出したプロファイル 1 個と、その生セクタ。
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct ProfileRead {
     pub source: ProfileSource,
     pub sector: u16,

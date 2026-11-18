@@ -14,6 +14,7 @@
 use crate::transport::Channel;
 use devhub_core::backend::{HubError, HubResult};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -90,6 +91,8 @@ pub struct Hidpp {
     /// 機能 ID → `FeatureInfo`。「機能が無い」(index 0) も再問い合わせを省くために
     /// 覚えておく (libratbag の `hidpp_root_get_feature_idx` 相当をキャッシュにしたもの)。
     features: Mutex<HashMap<u16, FeatureInfo>>,
+    /// 送った要求の数 (診断用。`hidppprobe --timing`)。
+    requests: AtomicU32,
 }
 
 impl Hidpp {
@@ -99,7 +102,13 @@ impl Hidpp {
             ch,
             dev_idx,
             features: Mutex::new(HashMap::new()),
+            requests: AtomicU32::new(0),
         }
+    }
+
+    /// これまでに送った要求の数 (1 要求 = 1 往復)。
+    pub fn request_count(&self) -> u32 {
+        self.requests.load(Ordering::Relaxed)
     }
 
     /// `feat_index` の機能 `func` を `params` 付きで呼び、応答の params 16B を返す。
@@ -115,6 +124,7 @@ impl Hidpp {
         let n = params.len().min(16);
         body[3..3 + n].copy_from_slice(&params[..n]);
         self.ch.send_report(REPORT_ID_LONG, &body)?;
+        self.requests.fetch_add(1, Ordering::Relaxed);
 
         let deadline = Instant::now() + Duration::from_millis(RECV_TIMEOUT_MS as u64);
         loop {
