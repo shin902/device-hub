@@ -4,4 +4,9 @@
 //! デバイスドライバとしての実装 (caps / read / apply) はこの上に載る別モジュール。
 
 pub mod features;
+pub mod onboard_io;
 pub mod proto;
+#[cfg(test)]
+mod tests_features;
+#[cfg(test)]
+mod tests_onboard_io;
