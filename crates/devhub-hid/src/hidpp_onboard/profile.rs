@@ -155,6 +155,9 @@ pub struct OnboardProfile {
     name_raw: [u8; NAME_BYTES],
     /// LED (0 = ロゴ、1 = DPI 部)。G-shift 側領域には libratbag にならい本体側と同じ内容を書く。
     pub leds: [LedMode; LED_COUNT],
+    /// LED 領域の生バイト。`leds` が読み込み時と同じなら serialize はこれをそのまま書く
+    /// (明るさ 0=100% や未使用バイトを再エンコードで変えないため)。
+    leds_raw: [[u8; 11]; LED_COUNT],
     /// 未解釈領域: 電源ブロック (13-31)・G-shift 側 LED (230-251)・末尾予備 (252-)。
     pub spare: Vec<u8>,
 }
@@ -203,10 +206,11 @@ pub fn parse(bytes: &[u8], sector_size: usize, button_count: usize) -> HubResult
     let shift_buttons = (0..button_count)
         .map(|slot| ButtonBinding::from_bytes(&bytes[OFFSET_SHIFT_BUTTONS + 4 * slot..][..4].try_into().unwrap()))
         .collect::<Vec<_>>();
-    let leds = [
-        decode_led(bytes[OFFSET_LEDS..][..11].try_into().unwrap()),
-        decode_led(bytes[OFFSET_LEDS + 11..][..11].try_into().unwrap()),
+    let leds_raw: [[u8; 11]; LED_COUNT] = [
+        bytes[OFFSET_LEDS..][..11].try_into().unwrap(),
+        bytes[OFFSET_LEDS + 11..][..11].try_into().unwrap(),
     ];
+    let leds = [decode_led(&leds_raw[0]), decode_led(&leds_raw[1])];
     let mut spare = Vec::with_capacity(sector_size - OFFSET_POWER_BLOCK - 2);
     spare.extend_from_slice(&bytes[OFFSET_POWER_BLOCK..OFFSET_BUTTONS]);
     spare.extend_from_slice(&bytes[OFFSET_SHIFT_LEDS..OFFSET_TAIL]);
@@ -221,6 +225,7 @@ pub fn parse(bytes: &[u8], sector_size: usize, button_count: usize) -> HubResult
         name: decode_name(&bytes[OFFSET_NAME..][..NAME_BYTES]),
         name_raw: bytes[OFFSET_NAME..][..NAME_BYTES].try_into().unwrap(),
         leds,
+        leds_raw,
         spare,
     })
 }
@@ -251,14 +256,16 @@ pub fn serialize(profile: &OnboardProfile, sector_size: usize) -> Vec<u8> {
     for (slot, binding) in profile.shift_buttons.iter().enumerate() {
         bytes[OFFSET_SHIFT_BUTTONS + 4 * slot..OFFSET_SHIFT_BUTTONS + 4 * slot + 4].copy_from_slice(&binding.to_bytes());
     }
-    let reencoded = encode_name(&profile.name);
-    if reencoded == profile.name_raw {
+    // 名前が読み込み時のままなら生バイトを書く (0xFF 埋めの未設定名を `00 00 ff..` に変えない)。
+    if decode_name(&profile.name_raw) == profile.name {
         bytes[OFFSET_NAME..OFFSET_NAME + NAME_BYTES].copy_from_slice(&profile.name_raw);
     } else {
-        bytes[OFFSET_NAME..OFFSET_NAME + NAME_BYTES].copy_from_slice(&reencoded);
+        bytes[OFFSET_NAME..OFFSET_NAME + NAME_BYTES].copy_from_slice(&encode_name(&profile.name));
     }
     for (zone, led) in profile.leds.iter().enumerate() {
-        bytes[OFFSET_LEDS + 11 * zone..OFFSET_LEDS + 11 * zone + 11].copy_from_slice(&encode_led(led));
+        let raw = &profile.leds_raw[zone];
+        let encoded = if decode_led(raw) == *led { *raw } else { encode_led(led) };
+        bytes[OFFSET_LEDS + 11 * zone..OFFSET_LEDS + 11 * zone + 11].copy_from_slice(&encoded);
     }
     let mut at = 0;
     bytes[OFFSET_POWER_BLOCK..OFFSET_BUTTONS].copy_from_slice(&profile.spare[at..at + POWER_BLOCK_LEN]);

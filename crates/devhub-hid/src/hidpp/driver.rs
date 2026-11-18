@@ -1,12 +1,14 @@
 //! Logitech HID++ 2.0 マウス (G502 HERO 有線 046D:C08B) の `DeviceDriver`。
 //!
-//! 設定の保存先はオンボードプロファイル (0x8100)。フェーズ 2a は読み出しだけで、
-//! `apply` は全て `NotImplemented` (書き込みはフェーズ 2b)。
+//! 設定の保存先はオンボードプロファイル (0x8100)。`apply` はボタン・DPI ステージ・
+//! ポーリングを現在プロファイルのセクタへ書き (`driver_write`)、現在ステージの切替だけは
+//! setSensorDpi で行う (プロファイルは書かない)。
 //! オンボードモード (hidpp20.c:1797-1800: 0=変更なし / 1=onboard / 2=host) は
-//! libratbag のように開いた時点で切り替えたりせず、読むだけにする。
+//! libratbag のように切り替えたりせず、onboard (1) でなければ書き込みを拒否する。
 
 use super::driver_buttons;
 use super::driver_read::{self, SETTING_POLLING};
+use super::driver_write;
 use super::features::DpiList;
 use super::onboard_io::OnboardProfilesDesc;
 use super::proto::{Hidpp, DEV_IDX_WIRED};
@@ -124,13 +126,11 @@ impl HidppDriver {
         &self.hp
     }
 
-    /// 現在プロファイル (0 始まり)。デバイスは 1 始まりで返す (`driver_read::profile_index`)。
-    fn active_profile(&self) -> HubResult<u8> {
-        let raw = self
-            .hp
-            .current_profile()?
-            .ok_or(HubError::Unsupported("OnboardProfiles (0x8100)"))?;
-        driver_read::profile_index(raw, self.desc.profile_count)
+    /// 現在プロファイルへ `change` を書く (読み → 編集 → 書き → 読み戻し照合)。
+    fn write_profile(&self, change: &Change) -> HubResult<()> {
+        driver_write::write_active_profile(&self.hp, &self.desc, |p| {
+            driver_write::edit_profile(p, change, &self.caps)
+        })
     }
 }
 
@@ -149,9 +149,7 @@ impl DeviceDriver for HidppDriver {
     }
 
     fn read(&self) -> HubResult<DeviceState> {
-        let active = self.active_profile()?;
-        let (_, dir) = driver_read::read_directory(&self.hp, &self.desc)?;
-        let read = driver_read::read_profile(&self.hp, &self.desc, dir.as_ref(), active)?;
+        let (active, read) = driver_read::read_active_profile(&self.hp, &self.desc)?;
         let current_dpi = self.hp.sensor_dpi(SENSOR).ok().flatten().map(|(d, _)| d);
         let with_polling = self.caps.setting(SETTING_POLLING).is_some();
         Ok(driver_read::build_state(
@@ -162,9 +160,18 @@ impl DeviceDriver for HidppDriver {
         ))
     }
 
-    fn apply(&self, _change: &Change) -> HubResult<()> {
-        Err(HubError::NotImplemented(
-            "HID++ オンボードプロファイルへの書き込み (フェーズ 2b)",
-        ))
+    fn apply(&self, change: &Change) -> HubResult<()> {
+        match change {
+            Change::ActiveStage(index) => {
+                let (_, read) = driver_read::read_active_profile(&self.hp, &self.desc)?;
+                let dpi = driver_write::stage_dpi(&read.profile, *index)?;
+                self.hp.set_sensor_dpi(SENSOR, dpi)
+            }
+            Change::Button { .. } | Change::DpiStages { .. } => self.write_profile(change),
+            Change::Setting { id, .. } if id == SETTING_POLLING => self.write_profile(change),
+            _ => Err(HubError::NotImplemented(
+                "HID++: ボタン・DPI・ポーリング以外の書き込み",
+            )),
+        }
     }
 }

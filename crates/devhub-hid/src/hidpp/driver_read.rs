@@ -39,6 +39,22 @@ pub fn profile_index(raw: u8, profile_count: u8) -> HubResult<u8> {
     Ok(raw - 1)
 }
 
+/// getCurrentProfile → 0 始まりの index (`profile_index`)。機能が無ければ Unsupported。
+pub fn current_profile_index(hp: &Hidpp, desc: &OnboardProfilesDesc) -> HubResult<u8> {
+    let raw = hp
+        .current_profile()?
+        .ok_or(HubError::Unsupported("OnboardProfiles (0x8100)"))?;
+    profile_index(raw, desc.profile_count)
+}
+
+/// 現在プロファイルの index とその中身 (ディレクトリ → プロファイルの順に読む)。
+pub fn read_active_profile(hp: &Hidpp, desc: &OnboardProfilesDesc) -> HubResult<(u8, ProfileRead)> {
+    let active = current_profile_index(hp, desc)?;
+    let (_, dir) = read_directory(hp, desc)?;
+    let read = read_profile(hp, desc, dir.as_ref(), active)?;
+    Ok((active, read))
+}
+
 /// プロファイルをどこから読んだか。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProfileSource {

@@ -1,19 +1,26 @@
-//! Logitech G502 HERO (046d:c08b) の HID++ 2.0 診断 — **読み取りのみ**。
+//! Logitech G502 HERO (046d:c08b) の HID++ 2.0 診断 — 既定は**読み取りのみ**。
 //!
 //! 開く → protocol_version / FW / 名前 / DPI リスト・現在値 / レポートレート /
 //! onboard desc / mode / current_profile / ディレクトリと現在プロファイルの
-//! セクタ 16 進ダンプ + parse 結果を表示する。書き込み系 (set_* / write_sector /
-//! set_onboard_mode) は一切呼ばない。macOS / Windows どちらでも動く。
+//! セクタ 16 進ダンプ + parse 結果を表示する。`--write-test` を付けない限り
+//! 書き込み系 (set_* / write_sector / set_onboard_mode) は一切呼ばない。macOS / Windows どちらでも動く。
 //!
 //! ```text
-//! cargo run -p devhub-hid --example hidppprobe          # 現在プロファイルだけ
-//! cargo run -p devhub-hid --example hidppprobe -- --all # ディレクトリの全エントリ
+//! cargo run -p devhub-hid --example hidppprobe                 # 現在プロファイルだけ
+//! cargo run -p devhub-hid --example hidppprobe -- --all        # ディレクトリの全エントリ
+//! cargo run -p devhub-hid --example hidppprobe -- --write-test # 現在プロファイルに同じバイトを書き戻す
 //! ```
+//!
+//! `--write-test` はドライバと同じ書き込み経路 (`driver_write::write_active_profile`) で
+//! 現在プロファイルを**変更なし**で書き直し、読み戻して元のバイトと比べて OK / 差分を出す。
+//! 再エンコードが読み出しと一致しない場合や ROM プロファイル・ホストモードでは書かずに中止する。
 //!
 //! `--all` はディレクトリの各エントリのセクタを memoryRead だけで読み、
 //! 16 進ダンプと要約 (レート・既定/シフト段・DPI・ボタン・LED) を出す。
 
 use devhub_hid::hidpp::driver_read::{profile_index, read_directory, read_profile};
+use devhub_hid::hidpp::driver_write::{diff_offsets, write_active_profile};
+use devhub_hid::hidpp::onboard_io::OnboardProfilesDesc;
 use devhub_hid::hidpp::proto::{Hidpp, DEV_IDX_WIRED};
 use devhub_hid::hidpp_onboard::{profile, OnboardProfile, ProfileDirectory};
 use devhub_hid::transport::Channel;
@@ -27,6 +34,7 @@ const LONG_REPORT_LEN: usize = 20;
 
 fn main() {
     let all = std::env::args().any(|a| a == "--all");
+    let write_test = std::env::args().any(|a| a == "--write-test");
     let api = hidapi::HidApi::new().expect("hidapi init");
     let Some(info) = api.device_list().find(|d| {
         d.vendor_id() == VID
@@ -96,18 +104,44 @@ fn main() {
             return;
         }
     };
-    match read_profile(&hp, &desc, dir.as_ref(), index) {
-        Ok(r) => {
-            println!(
-                "\n== profile index {index}: sector {:#06x} ({:?}, {} B)",
-                r.sector,
-                r.source,
-                r.bytes.len()
-            );
-            dump(&r.bytes);
-            summary(&r.profile);
+    let r = match read_profile(&hp, &desc, dir.as_ref(), index) {
+        Ok(r) => r,
+        Err(e) => {
+            println!("profile index {index} read: {e}");
+            return;
         }
-        Err(e) => println!("profile index {index} read: {e}"),
+    };
+    println!(
+        "\n== profile index {index}: sector {:#06x} ({:?}, {} B)",
+        r.sector,
+        r.source,
+        r.bytes.len()
+    );
+    dump(&r.bytes);
+    summary(&r.profile);
+    if write_test {
+        rewrite_same_bytes(&hp, &desc, r.sector, &r.bytes);
+    }
+}
+
+/// `--write-test`: 変更なしで書き込み経路を通し、読み戻して元のバイトと比べる。
+fn rewrite_same_bytes(hp: &Hidpp, desc: &OnboardProfilesDesc, sector: u16, original: &[u8]) {
+    println!("\n== write-test: sector {sector:#06x} に同じバイトを書き戻す");
+    if let Err(e) = write_active_profile(hp, desc, |_| Ok(())) {
+        println!("write-test: 中止/失敗: {e}");
+        return;
+    }
+    match hp.read_sector(sector, desc.sector_size) {
+        Ok(back) => {
+            let diff = diff_offsets(original, &back);
+            if diff.is_empty() {
+                println!("write-test: OK (読み戻し {} B が元と一致)", back.len());
+            } else {
+                println!("write-test: 差分 {} バイト offset {diff:?}", diff.len());
+                dump(&back);
+            }
+        }
+        Err(e) => println!("write-test: 読み戻し失敗: {e}"),
     }
 }
 

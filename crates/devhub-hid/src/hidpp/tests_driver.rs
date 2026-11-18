@@ -10,18 +10,18 @@ use crate::transport::Channel;
 use devhub_core::backend::DeviceDriver;
 use devhub_core::model::*;
 
-const IDX: u8 = 0xFF;
+pub(super) const IDX: u8 = 0xFF;
 /// getFeature で返す feature index。
-const F_ONB: u8 = 0x09;
-const F_DPI: u8 = 0x07;
-const F_RATE: u8 = 0x08;
+pub(super) const F_ONB: u8 = 0x09;
+pub(super) const F_DPI: u8 = 0x07;
+pub(super) const F_RATE: u8 = 0x08;
 /// G502 HERO 実機の getProfilesDescription と同じ 256B。
-const SECTOR: usize = 256;
+pub(super) const SECTOR: usize = 256;
 /// G502 HERO 風: プロファイル 5 個、ROM 3 個、ボタン 11。
 const PROFILES: u8 = 5;
 const ROMS: u8 = 3;
 
-fn frame(feat: u8, addr: u8, params: &[u8]) -> Vec<u8> {
+pub(super) fn frame(feat: u8, addr: u8, params: &[u8]) -> Vec<u8> {
     let mut v = vec![0x11, IDX, feat, addr];
     v.extend_from_slice(params);
     v
@@ -53,7 +53,7 @@ fn info() -> DeviceInfo {
 }
 
 /// open の応答: desc → DPI リスト (100–25600 step 50) → レート (1/2/4/8ms)。
-fn open_mock() -> HidppDriver {
+pub(super) fn open_mock() -> HidppDriver {
     let h = Hidpp::new(Channel::mock(), IDX);
     feature_reply(&h, F_ONB);
     let desc = [1, 2, 1, PROFILES, ROMS, 11, 16, 0x01, 0x00, 10, 1];
@@ -66,7 +66,7 @@ fn open_mock() -> HidppDriver {
 }
 
 /// memoryRead の応答としてセクタ 1 個分を積む (read_sector と同じオフセット列)。
-fn queue_sector(d: &HidppDriver, bytes: &[u8]) {
+pub(super) fn queue_sector(d: &HidppDriver, bytes: &[u8]) {
     let size = bytes.len();
     let mut offset = 0;
     while offset < size {
@@ -77,7 +77,7 @@ fn queue_sector(d: &HidppDriver, bytes: &[u8]) {
 }
 
 /// CRC 正のプロファイルセクタ (rate 1000/ms、既定段、DPI 5 段)。
-fn profile_sector(rate_ms: u8, default_idx: u8, dpi: [u16; 5]) -> Vec<u8> {
+pub(super) fn profile_sector(rate_ms: u8, default_idx: u8, dpi: [u16; 5]) -> Vec<u8> {
     let mut b = vec![0xFF_u8; SECTOR];
     b[0] = rate_ms;
     b[1] = default_idx;
@@ -91,7 +91,7 @@ fn profile_sector(rate_ms: u8, default_idx: u8, dpi: [u16; 5]) -> Vec<u8> {
     b
 }
 
-fn directory_sector() -> Vec<u8> {
+pub(super) fn directory_sector() -> Vec<u8> {
     let entries = (1..=u16::from(PROFILES))
         .map(|a| DirectoryEntry { address: a, enabled: true })
         .collect();
@@ -99,7 +99,7 @@ fn directory_sector() -> Vec<u8> {
 }
 
 /// memoryRead 要求の sector (params 先頭 BE16) の列。
-fn read_sectors(d: &HidppDriver) -> Vec<u16> {
+pub(super) fn read_sectors(d: &HidppDriver) -> Vec<u16> {
     d.hp_for_test()
         .ch
         .mock_sent()
@@ -238,11 +238,4 @@ fn rom_sector_uses_first_rom_beyond_rom_count() {
     assert_eq!(rom_sector(0, 3), 0x0101);
     assert_eq!(rom_sector(2, 3), 0x0103);
     assert_eq!(rom_sector(4, 3), 0x0101);
-}
-
-#[test]
-fn apply_is_not_implemented_in_phase_2a() {
-    let d = open_mock();
-    let err = d.apply(&Change::ActiveStage(0)).unwrap_err();
-    assert!(matches!(err, devhub_core::backend::HubError::NotImplemented(_)));
 }

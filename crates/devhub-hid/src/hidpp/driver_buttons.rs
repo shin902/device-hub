@@ -64,8 +64,6 @@ pub fn binding_to_action(b: &ButtonBinding, p: &OnboardProfile) -> ButtonAction 
 
 /// 契約 → ワイヤ。`current` は既存割当 (未対応種類の往復保存と
 /// Special/Disabled の予備・3 バイト目を引き継ぐのに使う)。
-/// STEP 2 (書き込みパス) から使う。テストでは変換の round-trip を検証する。
-#[allow(dead_code)]
 pub fn action_to_binding(a: &ButtonAction, current: &ButtonBinding) -> HubResult<ButtonBinding> {
     Ok(match a {
         ButtonAction::Disabled => {
